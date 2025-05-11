@@ -1,0 +1,410 @@
+<!DOCTYPE html><html><head><meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Audio Visualizer</title>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            font-family: Arial, sans-serif;
+        }
+        canvas {
+            display: block;
+        }
+        #controls {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 15px;
+            border-radius: 10px;
+            color: white;
+            max-width: 300px;
+            transition: all 0.3s ease;
+        }
+        #controls.hidden {
+            transform: translateX(-320px);
+        }
+        #toggleControls {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: rgba(0, 0, 0, 0.7);
+            color: white;
+            border: none;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            font-size: 20px;
+            cursor: pointer;
+            z-index: 100;
+            display: none;
+        }
+        .control-group {
+            margin-bottom: 15px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+        }
+        input[type="range"], select, button {
+            width: 100%;
+            margin-bottom: 10px;
+        }
+        button {
+            background: #4CAF50;
+            color: white;
+            border: none;
+            padding: 8px;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        #audioSource {
+            display: none;
+        }
+        #status {
+            font-size: 12px;
+            color: #ccc;
+            margin-top: 10px;
+        }
+        @media (max-width: 768px) {
+            #controls {
+                max-width: 250px;
+            }
+            #toggleControls {
+                display: block;
+            }
+        }
+    </style>
+
+<base target="_self">
+
+
+    </head><body><div id="controls">
+        <div class="control-group">
+            <label for="audioSource">Audio Source:</label>
+            <select id="sourceSelect">
+                <option value="file">Audio File</option>
+                <option value="mic">Microphone</option>
+            </select>
+            <input type="file" id="audioSource" accept="audio/*">
+            <button id="playPause">Play</button>
+            <button id="micButton">Enable Mic</button>
+        </div>
+        <div class="control-group">
+            <label for="particleCount">Particle Count: <span id="particleCountValue">1000</span></label>
+            <input type="range" id="particleCount" min="100" max="5000" value="1000" step="100">
+        </div>
+        <div class="control-group">
+            <label for="size">Particle Size: <span id="sizeValue">2</span></label>
+            <input type="range" id="size" min="1" max="10" value="2" step="0.1">
+        </div>
+        <div class="control-group">
+            <label for="sensitivity">Sensitivity: <span id="sensitivityValue">1</span></label>
+            <input type="range" id="sensitivity" min="0.1" max="3" value="1" step="0.1">
+        </div>
+        <div class="control-group">
+            <label for="colorMode">Color Mode:</label>
+            <select id="colorMode">
+                <option value="frequency">Frequency</option>
+                <option value="rainbow">Rainbow</option>
+                <option value="monochrome">Monochrome</option>
+            </select>
+        </div>
+        <div class="control-group">
+            <button id="randomize">Randomize</button>
+            <button id="reset">Reset</button>
+        </div>
+        <div id="status">No audio source selected</div>
+    </div>
+    <button id="toggleControls">☰</button>
+
+    <script>
+        // Initialize Three.js scene
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.body.appendChild(renderer.domElement);
+
+        // Audio setup
+        let audioContext, analyser, dataArray, audioSource;
+        let isPlaying = false;
+        const particleCount = 1000;
+        let particles;
+        let mouseX = 0, mouseY = 0;
+
+        // Parameters
+        let params = {
+            particleCount: 1000,
+            size: 2,
+            sensitivity: 1,
+            colorMode: 'frequency'
+        };
+
+        // Initialize audio
+        function initAudio() {
+            audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            analyser = audioContext.createAnalyser();
+            analyser.fftSize = 256;
+            dataArray = new Uint8Array(analyser.frequencyBinCount);
+        }
+
+        // Create particles
+        function createParticles() {
+            const geometry = new THREE.BufferGeometry();
+            const positions = new Float32Array(params.particleCount * 3);
+            const colors = new Float32Array(params.particleCount * 3);
+
+            for (let i = 0; i < params.particleCount; i++) {
+                positions[i * 3] = (Math.random() - 0.5) * 200;
+                positions[i * 3 + 1] = (Math.random() - 0.5) * 200;
+                positions[i * 3 + 2] = (Math.random() - 0.5) * 200;
+
+                colors[i * 3] = Math.random();
+                colors[i * 3 + 1] = Math.random();
+                colors[i * 3 + 2] = Math.random();
+            }
+
+            geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+            geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+
+            const material = new THREE.PointsMaterial({
+                size: params.size,
+                vertexColors: true,
+                transparent: true,
+                opacity: 0.8
+            });
+
+            particles = new THREE.Points(geometry, material);
+            scene.add(particles);
+        }
+
+        // Update particles based on audio
+        function updateParticles() {
+            if (!analyser || !particles) return;
+
+            analyser.getByteFrequencyData(dataArray);
+            const positions = particles.geometry.attributes.position.array;
+            const colors = particles.geometry.attributes.color.array;
+
+            for (let i = 0; i < params.particleCount; i++) {
+                const index = i % dataArray.length;
+                const value = dataArray[index] / 255 * params.sensitivity;
+
+                // Audio reaction
+                positions[i * 3 + 1] += (value * 10 - positions[i * 3 + 1] * 0.1);
+
+                // Mouse interaction
+                const dx = positions[i * 3] - mouseX * 100;
+                const dy = positions[i * 3 + 1] - mouseY * 100;
+                const dz = positions[i * 3 + 2];
+                const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+                
+                if (dist < 50) {
+                    positions[i * 3] += dx * 0.01;
+                    positions[i * 3 + 1] += dy * 0.01;
+                }
+
+                // Color based on mode
+                if (params.colorMode === 'frequency') {
+                    colors[i * 3] = value;
+                    colors[i * 3 + 1] = 1 - value;
+                    colors[i * 3 + 2] = 0.5 + value * 0.5;
+                } else if (params.colorMode === 'rainbow') {
+                    colors[i * 3] = Math.sin(i * 0.1) * 0.5 + 0.5;
+                    colors[i * 3 + 1] = Math.sin(i * 0.1 + 2) * 0.5 + 0.5;
+                    colors[i * 3 + 2] = Math.sin(i * 0.1 + 4) * 0.5 + 0.5;
+                }
+            }
+
+            particles.geometry.attributes.position.needsUpdate = true;
+            particles.geometry.attributes.color.needsUpdate = true;
+        }
+
+        // Setup camera
+        camera.position.z = 100;
+
+        // Animation loop
+        function animate() {
+            requestAnimationFrame(animate);
+            
+            if (particles) {
+                updateParticles();
+                particles.rotation.x += 0.001;
+                particles.rotation.y += 0.002;
+            }
+            
+            renderer.render(scene, camera);
+        }
+
+        // Handle window resize
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        // Mouse movement
+        window.addEventListener('mousemove', (event) => {
+            mouseX = (event.clientX / window.innerWidth) * 2 - 1;
+            mouseY = -(event.clientY / window.innerHeight) * 2 + 1;
+        });
+
+        // Touch movement
+        window.addEventListener('touchmove', (event) => {
+            mouseX = (event.touches[0].clientX / window.innerWidth) * 2 - 1;
+            mouseY = -(event.touches[0].clientY / window.innerHeight) * 2 + 1;
+            event.preventDefault();
+        });
+
+        // UI Controls
+        document.getElementById('sourceSelect').addEventListener('change', (e) => {
+            if (e.target.value === 'file') {
+                document.getElementById('audioSource').style.display = 'block';
+                document.getElementById('micButton').style.display = 'none';
+            } else {
+                document.getElementById('audioSource').style.display = 'none';
+                document.getElementById('micButton').style.display = 'block';
+            }
+        });
+
+        document.getElementById('audioSource').addEventListener('change', (e) => {
+            if (e.target.files[0]) {
+                const file = e.target.files[0];
+                const reader = new FileReader();
+                reader.onload = (event) => {
+                    audioContext.decodeAudioData(event.target.result, (buffer) => {
+                        if (audioSource) {
+                            audioSource.disconnect();
+                            if (audioSource.stop) audioSource.stop();
+                        }
+                        audioSource = audioContext.createBufferSource();
+                        audioSource.buffer = buffer;
+                        audioSource.connect(analyser);
+                        audioSource.connect(audioContext.destination);
+                        audioSource.loop = true;
+                        audioSource.start(0);
+                        isPlaying = true;
+                        document.getElementById('playPause').textContent = 'Pause';
+                        document.getElementById('status').textContent = 'Playing: ' + file.name;
+                    });
+                };
+                reader.readAsArrayBuffer(e.target.files[0]);
+            }
+        });
+
+        document.getElementById('micButton').addEventListener('click', () => {
+            navigator.mediaDevices.getUserMedia({ audio: true })
+                .then(stream => {
+                    if (audioSource) {
+                        audioSource.disconnect();
+                        if (audioSource.stop) audioSource.stop();
+                    }
+                    audioSource = audioContext.createMediaStreamSource(stream);
+                    audioSource.connect(analyser);
+                    isPlaying = true;
+                    document.getElementById('playPause').textContent = 'Pause';
+                    document.getElementById('status').textContent = 'Using microphone';
+                })
+                .catch(err => {
+                    console.error('Microphone access error:', err);
+                    document.getElementById('status').textContent = 'Microphone access denied';
+                });
+        });
+
+        document.getElementById('playPause').addEventListener('click', () => {
+            if (audioSource && audioSource.buffer) {
+                if (isPlaying) {
+                    audioSource.stop();
+                    isPlaying = false;
+                    document.getElementById('playPause').textContent = 'Play';
+                } else {
+                    audioSource = audioContext.createBufferSource();
+                    audioSource.buffer = audioSource.buffer;
+                    audioSource.connect(analyser);
+                    audioSource.connect(audioContext.destination);
+                    audioSource.loop = true;
+                    audioSource.start(0);
+                    isPlaying = true;
+                    document.getElementById('playPause').textContent = 'Pause';
+                }
+            }
+        });
+
+        document.getElementById('particleCount').addEventListener('input', (e) => {
+            params.particleCount = parseInt(e.target.value);
+            document.getElementById('particleCountValue').textContent = params.particleCount;
+            scene.remove(particles);
+            if (particles.geometry) particles.geometry.dispose();
+            if (particles.material) particles.material.dispose();
+            createParticles();
+        });
+
+        document.getElementById('size').addEventListener('input', (e) => {
+            params.size = parseFloat(e.target.value);
+            document.getElementById('sizeValue').textContent = params.size;
+            particles.material.size = params.size;
+        });
+
+        document.getElementById('sensitivity').addEventListener('input', (e) => {
+            params.sensitivity = parseFloat(e.target.value);
+            document.getElementById('sensitivityValue').textContent = params.sensitivity;
+        });
+
+        document.getElementById('colorMode').addEventListener('change', (e) => {
+            params.colorMode = e.target.value;
+        });
+
+        document.getElementById('randomize').addEventListener('click', () => {
+            params.size = Math.random() * 5 + 1;
+            params.sensitivity = Math.random() * 2 + 0.5;
+            params.colorMode = ['frequency', 'rainbow', 'monochrome'][Math.floor(Math.random() * 3)];
+            
+            document.getElementById('size').value = params.size;
+            document.getElementById('sizeValue').textContent = params.size.toFixed(1);
+            document.getElementById('sensitivity').value = params.sensitivity;
+            document.getElementById('sensitivityValue').textContent = params.sensitivity.toFixed(1);
+            document.getElementById('colorMode').value = params.colorMode;
+            
+            particles.material.size = params.size;
+        });
+
+        document.getElementById('reset').addEventListener('click', () => {
+            params = {
+                particleCount: 1000,
+                size: 2,
+                sensitivity: 1,
+                colorMode: 'frequency'
+            };
+            
+            document.getElementById('particleCount').value = params.particleCount;
+            document.getElementById('particleCountValue').textContent = params.particleCount;
+            document.getElementById('size').value = params.size;
+            document.getElementById('sizeValue').textContent = params.size;
+            document.getElementById('sensitivity').value = params.sensitivity;
+            document.getElementById('sensitivityValue').textContent = params.sensitivity;
+            document.getElementById('colorMode').value = params.colorMode;
+            
+            scene.remove(particles);
+            if (particles.geometry) particles.geometry.dispose();
+            if (particles.material) particles.material.dispose();
+            createParticles();
+        });
+
+        document.getElementById('toggleControls').addEventListener('click', () => {
+            document.getElementById('controls').classList.toggle('hidden');
+        });
+
+        // Initialize everything
+        initAudio();
+        createParticles();
+        animate();
+    </script>
+
+              
+          
+                
+          
+              
+</body></html>
